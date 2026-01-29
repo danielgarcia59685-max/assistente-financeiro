@@ -25,27 +25,32 @@ export default function LoginPage() {
         setError('Supabase não configurado')
         return
       }
+      // Fazer login via Supabase Auth
+      const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      })
 
-      // Buscar usuário pelo email
-      const { data: user, error: userError } = await supabase
+      if (signInError || !signInData?.user) {
+        setError('Email ou senha incorretos')
+        return
+      }
+
+      const userId = signInData.user.id
+
+      // Garantir que exista um registro na tabela `users`
+      const { data: profile } = await supabase
         .from('users')
-        .select('id, password_hash')
-        .eq('email', email)
+        .select('id, email')
+        .eq('id', userId)
         .single()
 
-      if (userError || !user) {
-        setError('Email ou senha incorretos')
-        return
+      if (!profile) {
+        // Criar perfil mínimo
+        await supabase.from('users').insert([{ id: userId, email }])
       }
 
-      // Verificar senha (simples - apenas para desenvolvimento)
-      if (password !== user.password_hash) {
-        setError('Email ou senha incorretos')
-        return
-      }
-
-      // Salvar user_id no localStorage para usar na app
-      localStorage.setItem('user_id', user.id)
+      localStorage.setItem('user_id', userId)
       localStorage.setItem('user_email', email)
 
       router.push('/dashboard')

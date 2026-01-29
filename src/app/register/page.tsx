@@ -36,37 +36,25 @@ export default function RegisterPage() {
         return
       }
 
-      // Verificar se o usuário já existe
-      const { data: existingUser, error: checkError } = await supabase
-        .from('users')
-        .select('id')
-        .eq('email', email)
-        .single()
+      // Registrar via Supabase Auth
+      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+        email,
+        password,
+      })
 
-      if (existingUser) {
-        setError('Este email já está registrado')
+      if (signUpError) {
+        setError('Erro ao registrar: ' + signUpError.message)
         setLoading(false)
         return
       }
 
-      // Criar novo usuário
-      const { data: newUser, error: createError } = await supabase
-        .from('users')
-        .insert([
-          {
-            email,
-            password_hash: password,
-          },
-        ])
-        .select()
-
-      if (createError) {
-        setError('Erro ao registrar: ' + (createError.message || 'Tente novamente'))
-        setLoading(false)
-        return
+      // Se usuário criado, garantir perfil na tabela `users`
+      const userId = signUpData?.user?.id
+      if (userId) {
+        await supabase.from('users').upsert([{ id: userId, email }])
       }
 
-      setSuccess('Conta criada com sucesso! Redirecionando...')
+      setSuccess('Conta criada com sucesso! Verifique seu email se necessário. Redirecionando...')
       setTimeout(() => {
         router.push('/login')
       }, 1500)

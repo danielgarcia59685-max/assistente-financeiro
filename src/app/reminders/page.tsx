@@ -1,12 +1,15 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+import { useAuth } from '@/hooks/use-auth'
 import { Navigation } from '@/components/Navigation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { supabase } from '@/lib/supabase'
 import { Bell, Plus, Trash2, CheckCircle2, Clock, AlertCircle, Edit } from 'lucide-react'
+import { toast } from '@/hooks/use-toast'
 
 interface Reminder {
   id: string
@@ -18,6 +21,8 @@ interface Reminder {
 }
 
 export default function RemindersPage() {
+  const router = useRouter()
+  const { userId, loading: authLoading } = useAuth()
   const [reminders, setReminders] = useState<Reminder[]>([])
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -27,10 +32,17 @@ export default function RemindersPage() {
     due_date: new Date().toISOString().split('T')[0],
     reminder_type: 'task',
   })
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
   useEffect(() => {
-    fetchReminders()
-  }, [])
+    if (!authLoading && !userId) {
+      router.push('/login')
+      return
+    }
+    if (userId) {
+      fetchReminders()
+    }
+  }, [userId, authLoading, router])
 
   const fetchReminders = async () => {
     if (!supabase) return
@@ -53,6 +65,15 @@ export default function RemindersPage() {
     e.preventDefault()
     if (!supabase) return
 
+    // Validação
+    if (!formData.title || formData.title.trim().length === 0) {
+      toast({ title: 'Título inválido', description: 'Informe um título para o lembrete', variant: 'destructive' })
+      return
+    }
+    if (!formData.due_date) {
+      toast({ title: 'Data inválida', description: 'Informe uma data para o lembrete', variant: 'destructive' })
+      return
+    }
     try {
       if (editingId) {
         // Atualizar lembrete

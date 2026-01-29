@@ -1,6 +1,8 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+import { useAuth } from '@/hooks/use-auth'
 import { Navigation } from '@/components/Navigation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -8,6 +10,7 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { supabase } from '@/lib/supabase'
 import { Target, Plus, Trash2, TrendingUp, Edit } from 'lucide-react'
+import { toast } from '@/hooks/use-toast'
 
 interface Goal {
   id: string
@@ -20,6 +23,8 @@ interface Goal {
 }
 
 export default function GoalsPage() {
+  const router = useRouter()
+  const { userId, loading: authLoading } = useAuth()
   const [goals, setGoals] = useState<Goal[]>([])
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -31,10 +36,17 @@ export default function GoalsPage() {
     status: 'not_started',
     target_date: new Date(new Date().getFullYear() + 1, 0, 1).toISOString().split('T')[0],
   })
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
   useEffect(() => {
-    fetchGoals()
-  }, [])
+    if (!authLoading && !userId) {
+      router.push('/login')
+      return
+    }
+    if (userId) {
+      fetchGoals()
+    }
+  }, [userId, authLoading, router])
 
   const fetchGoals = async () => {
     if (!supabase) return
@@ -57,6 +69,17 @@ export default function GoalsPage() {
     e.preventDefault()
     if (!supabase) return
 
+    // Validação
+    if (!formData.name || formData.name.trim().length === 0) {
+      toast({ title: 'Nome inválido', description: 'Informe um nome para a meta', variant: 'destructive' })
+      return
+    }
+    if (!formData.target_amount || isNaN(Number(formData.target_amount)) || Number(formData.target_amount) <= 0) {
+      toast({ title: 'Valor alvo inválido', description: 'Informe um valor alvo maior que 0', variant: 'destructive' })
+      return
+    }
+
+    setIsSubmitting(true)
     try {
       if (editingId) {
         await supabase.from('financial_goals').update({
@@ -81,6 +104,9 @@ export default function GoalsPage() {
       fetchGoals()
     } catch (error) {
       console.error('Erro ao salvar meta:', error)
+      toast({ title: 'Erro', description: 'Não foi possível salvar a meta', variant: 'destructive' })
+    } finally {
+      setIsSubmitting(false)
     }
   }
 
@@ -210,7 +236,7 @@ export default function GoalsPage() {
                 <Input type="date" value={formData.target_date} onChange={(e) => setFormData({ ...formData, target_date: e.target.value })} required className="bg-gray-800 border-gray-700 text-white rounded-xl" />
               </div>
               <div className="flex gap-3">
-                <Button type="submit" className="bg-amber-600 hover:bg-amber-700 text-white font-semibold px-6 py-3 rounded-xl">{editingId ? 'Atualizar' : 'Adicionar'}</Button>
+                <Button type="submit" disabled={isSubmitting} className="bg-amber-600 hover:bg-amber-700 text-white font-semibold px-6 py-3 rounded-xl">{isSubmitting ? (editingId ? 'Atualizando...' : 'Adicionando...') : (editingId ? 'Atualizar' : 'Adicionar')}</Button>
                 <Button type="button" onClick={() => resetForm()} className="border border-gray-700 text-gray-300 hover:bg-gray-800 px-6 py-3 rounded-xl">Cancelar</Button>
               </div>
             </form>

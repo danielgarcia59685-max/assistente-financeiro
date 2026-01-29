@@ -1,31 +1,40 @@
 import { NextRequest, NextResponse } from 'next/server'
-import twilio from 'twilio'
 import OpenAI from 'openai'
 import { supabase } from '@/lib/supabase'
 
-const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+const openai = process.env.OPENAI_API_KEY
+  ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+  : null
+
+const META_VERIFY_TOKEN = process.env.META_VERIFY_TOKEN
+const META_ACCESS_TOKEN = process.env.META_ACCESS_TOKEN
+const META_PHONE_NUMBER_ID = process.env.META_PHONE_NUMBER_ID
 
 // GET handler para verificação do webhook
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams
-  const hubChallenge = searchParams.get('hub.challenge')
-  
-  if (hubChallenge) {
-    return new NextResponse(hubChallenge, { status: 200 })
+  const mode = searchParams.get('hub.mode')
+  const token = searchParams.get('hub.verify_token')
+  const challenge = searchParams.get('hub.challenge')
+
+  if (mode === 'subscribe' && token && token === META_VERIFY_TOKEN) {
+    return new NextResponse(challenge || '', { status: 200 })
   }
-  
-  return NextResponse.json({ error: 'Invalid request' }, { status: 400 })
+
+  return NextResponse.json({ error: 'Invalid verification token' }, { status: 403 })
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const formData = await request.formData()
-    const from = formData.get('From') as string
-    const body = formData.get('Body') as string
+    const payload = await request.json()
 
-    if (!from || !body) {
-      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
+    const change = payload?.entry?.[0]?.changes?.[0]?.value
+    const message = change?.messages?.[0]
+    const from = message?.from as string | undefined
+    const text = message?.text?.body as string | undefined
+
+    if (!from || !text) {
+      return NextResponse.json({ success: true })
     }
 
     if (!supabase) {
@@ -33,21 +42,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Supabase not configured' }, { status: 500 })
     }
 
-    // Extrair número do WhatsApp (remover whatsapp:)
-    const whatsappNumber = from.replace('whatsapp:', '')
-
     // Encontrar ou criar usuário baseado no número
-    let { data: user, error: userError } = await supabase
+    let { data: user } = await supabase
       .from('users')
       .select('*')
-      .eq('email', whatsappNumber) // Usando email como identificador único, mas poderia ser phone
+      .eq('email', from)
       .single()
 
     if (!user) {
-      // Criar usuário se não existir
       const { data: newUser, error: createError } = await supabase
         .from('users')
-        .insert([{ name: `User ${whatsappNumber}`, email: whatsappNumber }])
+        .insert([{ name: `User ${from}`, email: from }])
         .select()
         .single()
 
@@ -58,15 +63,8 @@ export async function POST(request: NextRequest) {
       user = newUser
     }
 
-    // Processar mensagem com OpenAI
-    const response = await processMessage(body, user.id)
-
-    // Enviar resposta via WhatsApp
-    await twilioClient.messages.create({
-      from: `whatsapp:${process.env.TWILIO_WHATSAPP_NUMBER}`,
-      to: from,
-      body: response
-    })
+    const response = await processMessage(text, user.id)
+    await sendMetaMessage(from, response)
 
     return NextResponse.json({ success: true })
   } catch (error) {
@@ -76,6 +74,9 @@ export async function POST(request: NextRequest) {
 }
 
 async function processMessage(message: string, userId: string): Promise<string> {
+  if (!openai) {
+    return 'Integração com IA não configurada. Defina OPENAI_API_KEY para habilitar.'
+  }
   // Usar OpenAI para entender e processar a mensagem
   const completion = await openai.chat.completions.create({
     model: 'gpt-4',
@@ -184,4 +185,27 @@ async function handleQuery(message: string, userId: string): Promise<string> {
   }
 
   return 'Olá! Sou seu assistente financeiro. Posso registrar transações como "Gastei R$ 50 no mercado" ou responder perguntas sobre seu saldo e relatórios.'
+}
+
+async function sendMetaMessage(to: string, body: string) {
+  if (!META_ACCESS_TOKEN || !META_PHONE_NUMBER_ID) {
+    console.warn('Meta WhatsApp não configurado; resposta não enviada')
+    return
+  }
+
+  const url = `https://graph.facebook.com/v20.0/${META_PHONE_NUMBER_ID}/messages`
+
+  await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${META_ACCESS_TOKEN}`
+    },
+    body: JSON.stringify({
+      messaging_product: 'whatsapp',
+      to,
+      type: 'text',
+      text: { body }
+    })
+  })
 }

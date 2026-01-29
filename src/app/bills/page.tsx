@@ -1,6 +1,8 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+import { useAuth } from '@/hooks/use-auth'
 import { Navigation } from '@/components/Navigation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -8,6 +10,7 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { supabase } from '@/lib/supabase'
 import { FileText, Plus, Trash2, CheckCircle2, Edit } from 'lucide-react'
+import { toast } from '@/hooks/use-toast'
 
 interface Bill {
   id: string
@@ -23,6 +26,8 @@ interface Bill {
 }
 
 export default function BillsPage() {
+  const router = useRouter()
+  const { userId, loading: authLoading } = useAuth()
   const [bills, setBills] = useState<Bill[]>([])
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -36,10 +41,17 @@ export default function BillsPage() {
     recurrence_count: '',
     recurrence_end_date: '',
   })
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
   useEffect(() => {
-    fetchBills()
-  }, [activeTab])
+    if (!authLoading && !userId) {
+      router.push('/login')
+      return
+    }
+    if (userId) {
+      fetchBills()
+    }
+  }, [activeTab, userId, authLoading, router])
 
   const fetchBills = async () => {
     if (!supabase) return
@@ -63,6 +75,21 @@ export default function BillsPage() {
     e.preventDefault()
     if (!supabase) return
 
+    // Validação
+    if (!formData.amount || isNaN(Number(formData.amount)) || Number(formData.amount) <= 0) {
+      toast({ title: 'Valor inválido', description: 'Informe um valor maior que 0', variant: 'destructive' })
+      return
+    }
+    if (!formData.due_date) {
+      toast({ title: 'Data inválida', description: 'Informe uma data de vencimento', variant: 'destructive' })
+      return
+    }
+    if (formData.is_recurring && formData.recurrence_count && (isNaN(Number(formData.recurrence_count)) || Number(formData.recurrence_count) <= 0)) {
+      toast({ title: 'Recorrência inválida', description: 'Informe uma quantidade válida para recorrência', variant: 'destructive' })
+      return
+    }
+
+    setIsSubmitting(true)
     try {
       const table = activeTab === 'payable' ? 'accounts_payable' : 'accounts_receivable'
       const billData = {
@@ -85,6 +112,9 @@ export default function BillsPage() {
       fetchBills()
     } catch (error) {
       console.error('Erro ao salvar conta:', error)
+      toast({ title: 'Erro', description: 'Não foi possível salvar a conta', variant: 'destructive' })
+    } finally {
+      setIsSubmitting(false)
     }
   }
 
@@ -235,7 +265,7 @@ export default function BillsPage() {
                 </div>
               )}
               <div className="flex gap-3">
-                <Button type="submit" className="bg-amber-600 hover:bg-amber-700 text-white font-semibold px-6 py-3 rounded-xl">{editingId ? 'Atualizar' : 'Adicionar'}</Button>
+                <Button type="submit" disabled={isSubmitting} className="bg-amber-600 hover:bg-amber-700 text-white font-semibold px-6 py-3 rounded-xl">{isSubmitting ? (editingId ? 'Atualizando...' : 'Adicionando...') : (editingId ? 'Atualizar' : 'Adicionar')}</Button>
                 <Button type="button" onClick={() => resetForm()} className="border border-gray-700 text-gray-300 hover:bg-gray-800 px-6 py-3 rounded-xl">Cancelar</Button>
               </div>
             </form>

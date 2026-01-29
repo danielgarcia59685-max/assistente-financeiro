@@ -1,11 +1,14 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { useAuth } from '@/hooks/use-auth'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Edit, Trash2, Plus } from 'lucide-react'
+import { toast } from '@/hooks/use-toast'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Navigation } from '@/components/Navigation'
 import { supabase } from '@/lib/supabase'
@@ -21,6 +24,8 @@ interface Transaction {
 }
 
 export default function TransactionsPage() {
+  const router = useRouter()
+  const { userId, loading: authLoading } = useAuth()
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -32,10 +37,17 @@ export default function TransactionsPage() {
     date: new Date().toISOString().split('T')[0],
     payment_method: 'dinheiro',
   })
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
   useEffect(() => {
-    fetchTransactions()
-  }, [])
+    if (!authLoading && !userId) {
+      router.push('/login')
+      return
+    }
+    if (userId) {
+      fetchTransactions()
+    }
+  }, [userId, authLoading, router])
 
   const fetchTransactions = async () => {
     if (!supabase) {
@@ -62,6 +74,18 @@ export default function TransactionsPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!supabase) return
+
+    // Validação básica
+    if (!formData.amount || isNaN(Number(formData.amount)) || Number(formData.amount) <= 0) {
+      toast({ title: 'Valor inválido', description: 'Informe um valor maior que 0', variant: 'destructive' })
+      return
+    }
+    if (!formData.category) {
+      toast({ title: 'Categoria vazia', description: 'Selecione ou informe uma categoria', variant: 'destructive' })
+      return
+    }
+
+    setIsSubmitting(true)
 
     try {
       if (editingId) {
@@ -90,6 +114,10 @@ export default function TransactionsPage() {
       fetchTransactions()
     } catch (error) {
       console.error('Erro ao salvar transação:', error)
+      toast({ title: 'Erro', description: 'Não foi possível salvar a transação', variant: 'destructive' })
+    }
+    finally {
+      setIsSubmitting(false)
     }
   }
 
@@ -225,8 +253,8 @@ export default function TransactionsPage() {
                 />
               </div>
               <div className="flex gap-3">
-                <Button type="submit" className="bg-amber-600 hover:bg-amber-700 text-white font-semibold px-6 py-3 rounded-xl transition">
-                  {editingId ? 'Atualizar' : 'Adicionar'}
+                <Button type="submit" disabled={isSubmitting} className="bg-amber-600 hover:bg-amber-700 text-white font-semibold px-6 py-3 rounded-xl transition">
+                  {isSubmitting ? (editingId ? 'Atualizando...' : 'Adicionando...') : (editingId ? 'Atualizar' : 'Adicionar')}
                 </Button>
                 <Button 
                   type="button" 
