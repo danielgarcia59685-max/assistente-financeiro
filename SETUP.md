@@ -1,6 +1,6 @@
 # Assistente Financeiro - Setup & Configuração
 
-## 🚀 Quick Start
+## 🚀 Quick Start Local
 
 ### 1. Instalar Dependências
 ```bash
@@ -8,20 +8,20 @@ npm install
 ```
 
 ### 2. Variáveis de Ambiente
-Crie um arquivo `.env.local` na raiz do projeto com as seguintes variáveis:
+Crie um arquivo `.env.local` na raiz do projeto:
 
 ```env
-# Supabase
-NEXT_PUBLIC_SUPABASE_URL=sua_supabase_url
-NEXT_PUBLIC_SUPABASE_ANON_KEY=sua_supabase_anon_key
+# Supabase (Required)
+NEXT_PUBLIC_SUPABASE_URL=https://hexluskvmrspfmekaypr.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=sb_publishable_ZgXf726uaSNLqLYDJPIrZw_4KkVKPwb
 
-# Twilio (WhatsApp Integration - Opcional)
-TWILIO_ACCOUNT_SID=seu_twilio_account_sid
-TWILIO_AUTH_TOKEN=seu_twilio_auth_token
-TWILIO_WHATSAPP_NUMBER=+5511999999999
+# Meta WhatsApp (Opcional - para depois)
+META_VERIFY_TOKEN=seu-token-qualquer-coisa
+META_ACCESS_TOKEN=seu-access-token-da-meta
+META_PHONE_NUMBER_ID=1043765222143479
 
-# OpenAI (AI Features - Opcional)
-OPENAI_API_KEY=sua_openai_api_key
+# OpenAI (Opcional - para IA)
+OPENAI_API_KEY=sua-chave-openai
 ```
 
 ### 3. Rodar Servidor Dev
@@ -39,6 +39,47 @@ npm start
 
 ---
 
+## 🚀 Deploy no Vercel
+
+### Pré-requisitos
+- Conta Vercel (vercel.com)
+- GitHub conectado
+- Variáveis de ambiente prontas
+
+### Passos
+
+1. **Ir para Vercel Dashboard**
+   - [vercel.com](https://vercel.com)
+
+2. **Criar Novo Projeto**
+   - Clique em "New Project"
+   - Selecione seu repositório GitHub `assistente-financeiro`
+   - Autorize o Vercel
+
+3. **Configurar Environment Variables**
+   - Vá para **Settings** → **Environment Variables**
+   - Adicione as 2 variáveis Supabase:
+     - `NEXT_PUBLIC_SUPABASE_URL=...`
+     - `NEXT_PUBLIC_SUPABASE_ANON_KEY=...`
+
+4. **Deploy**
+   - Clique em **Deploy**
+   - Aguarde ~2 minutos
+   - Você receberá uma URL: `https://seu-projeto.vercel.app`
+
+5. **Testar**
+   - Acesse a URL
+   - Faça login com Supabase Auth
+   - Teste CRUD de transações, contas, lembretes, etc.
+
+### Adicionar Variáveis Later (WhatsApp + OpenAI)
+Quando quiser ativar WhatsApp:
+1. Volte ao Vercel → Settings → Environment Variables
+2. Adicione as 4 variáveis Meta + OpenAI
+3. Redeploye clicando em "Redeploy"
+
+---
+
 ## 📋 Funcionalidades
 
 ### ✅ Web (Implementado)
@@ -49,12 +90,12 @@ npm start
 - **Dashboard**: Resumo financeiro com gráficos
 - **Relatórios**: Análise de despesas e receitas
 
-### 🚀 WhatsApp Bot (Conectado ao Twilio)
+### 🚀 WhatsApp Bot (Conectado a Meta Cloud API)
 - Receber mensagens via WhatsApp
-- Transcrever áudios (Whisper API)
-- Extrair dados financeiros (GPT-4)
+- Processar com OpenAI (extrair dados financeiros)
 - Responder inteligentemente
 - Salvar transações automaticamente
+- *(Setup after web deployment)*
 
 ### 🎨 Design
 - Interface premium com paleta: Preto, Dourado, Grafite
