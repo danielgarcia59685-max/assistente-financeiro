@@ -26,6 +26,11 @@ export default function ReportsPage() {
   }, [])
 
   const fetchMonthlyReport = async () => {
+    if (!supabase) {
+      console.warn('Supabase não está configurado')
+      return
+    }
+    
     // Agrupar por mês
     const { data, error } = await supabase
       .from('transactions')
@@ -51,15 +56,20 @@ export default function ReportsPage() {
   }
 
   const fetchCategoryReport = async () => {
+    if (!supabase) {
+      console.warn('Supabase não está configurado')
+      return
+    }
+    
     const { data, error } = await supabase
       .from('transactions')
-      .select('amount, categories (name)')
+      .select('amount, category')
       .eq('type', 'expense')
 
     if (error) console.error(error)
     else {
       const grouped = data.reduce((acc, transaction) => {
-        const category = transaction.categories?.name || 'Outros'
+        const category = transaction.category || 'Outros'
         acc[category] = (acc[category] || 0) + transaction.amount
         return acc
       }, {} as Record<string, number>)

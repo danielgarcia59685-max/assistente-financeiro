@@ -6,47 +6,73 @@ import { supabase } from '@/lib/supabase'
 const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 
+// GET handler para verificação do webhook
+export async function GET(request: NextRequest) {
+  const searchParams = request.nextUrl.searchParams
+  const hubChallenge = searchParams.get('hub.challenge')
+  
+  if (hubChallenge) {
+    return new NextResponse(hubChallenge, { status: 200 })
+  }
+  
+  return NextResponse.json({ error: 'Invalid request' }, { status: 400 })
+}
+
 export async function POST(request: NextRequest) {
-  const formData = await request.formData()
-  const from = formData.get('From') as string
-  const body = formData.get('Body') as string
+  try {
+    const formData = await request.formData()
+    const from = formData.get('From') as string
+    const body = formData.get('Body') as string
 
-  // Extrair número do WhatsApp (remover whatsapp:)
-  const whatsappNumber = from.replace('whatsapp:', '')
+    if (!from || !body) {
+      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
+    }
 
-  // Encontrar ou criar usuário baseado no número
-  let { data: user, error: userError } = await supabase
-    .from('users')
-    .select('*')
-    .eq('email', whatsappNumber) // Usando email como identificador único, mas poderia ser phone
-    .single()
+    if (!supabase) {
+      console.warn('Supabase não está configurado')
+      return NextResponse.json({ error: 'Supabase not configured' }, { status: 500 })
+    }
 
-  if (!user) {
-    // Criar usuário se não existir
-    const { data: newUser, error: createError } = await supabase
+    // Extrair número do WhatsApp (remover whatsapp:)
+    const whatsappNumber = from.replace('whatsapp:', '')
+
+    // Encontrar ou criar usuário baseado no número
+    let { data: user, error: userError } = await supabase
       .from('users')
-      .insert([{ name: `User ${whatsappNumber}`, email: whatsappNumber }])
-      .select()
+      .select('*')
+      .eq('email', whatsappNumber) // Usando email como identificador único, mas poderia ser phone
       .single()
 
-    if (createError) {
-      console.error('Erro ao criar usuário:', createError)
-      return NextResponse.json({ error: 'Erro ao criar usuário' }, { status: 500 })
+    if (!user) {
+      // Criar usuário se não existir
+      const { data: newUser, error: createError } = await supabase
+        .from('users')
+        .insert([{ name: `User ${whatsappNumber}`, email: whatsappNumber }])
+        .select()
+        .single()
+
+      if (createError) {
+        console.error('Erro ao criar usuário:', createError)
+        return NextResponse.json({ error: 'Erro ao criar usuário' }, { status: 500 })
+      }
+      user = newUser
     }
-    user = newUser
+
+    // Processar mensagem com OpenAI
+    const response = await processMessage(body, user.id)
+
+    // Enviar resposta via WhatsApp
+    await twilioClient.messages.create({
+      from: `whatsapp:${process.env.TWILIO_WHATSAPP_NUMBER}`,
+      to: from,
+      body: response
+    })
+
+    return NextResponse.json({ success: true })
+  } catch (error) {
+    console.error('Erro ao processar webhook:', error)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
-
-  // Processar mensagem com OpenAI
-  const response = await processMessage(body, user.id)
-
-  // Enviar resposta via WhatsApp
-  await twilioClient.messages.create({
-    from: `whatsapp:${process.env.TWILIO_WHATSAPP_NUMBER}`,
-    to: from,
-    body: response
-  })
-
-  return NextResponse.json({ success: true })
 }
 
 async function processMessage(message: string, userId: string): Promise<string> {
@@ -93,34 +119,27 @@ async function processMessage(message: string, userId: string): Promise<string> 
 }
 
 async function saveTransaction(data: any, userId: string) {
-  // Encontrar ou criar categoria
-  let { data: category } = await supabase
-    .from('categories')
-    .select('*')
-    .eq('name', data.category)
-    .eq('user_id', userId)
-    .single()
-
-  if (!category) {
-    const { data: newCategory } = await supabase
-      .from('categories')
-      .insert([{ name: data.category, type: data.type, user_id: userId }])
-      .select()
-      .single()
-    category = newCategory
+  if (!supabase) {
+    console.warn('Supabase não está configurado')
+    return
   }
 
-  // Criar transação
-  await supabase
-    .from('transactions')
-    .insert([{
-      amount: data.amount,
-      type: data.type,
-      category_id: category.id,
-      description: data.description || '',
-      payment_method: data.payment_method || 'cash',
-      user_id: userId
-    }])
+  try {
+    // Criar transação diretamente (sem tabela categories separada)
+    await supabase
+      .from('transactions')
+      .insert([{
+        amount: data.amount,
+        type: data.type,
+        category: data.category,
+        description: data.description || '',
+        payment_method: data.payment_method || 'cash',
+        user_id: userId,
+        date: new Date().toISOString().split('T')[0]
+      }])
+  } catch (error) {
+    console.error('Erro ao salvar transação:', error)
+  }
 }
 
 async function handleQuery(message: string, userId: string): Promise<string> {

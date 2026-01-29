@@ -17,8 +17,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Criado com a Lasy",
-  description: "Projeto criado com Lasy AI",
+  title: "Assistente Financeiro",
+  description: "Aplicação para gerenciar suas finanças pessoais com inteligência artificial",
 };
 
 export default function RootLayout({

@@ -24,16 +24,25 @@ export default function TransactionsPage() {
   }, [])
 
   const fetchTransactions = async () => {
-    const { data, error } = await supabase
-      .from('transactions')
-      .select(`
-        *,
-        categories (name)
-      `)
-      .order('date', { ascending: false })
+    if (!supabase) {
+      console.warn('Supabase não está configurado')
+      return
+    }
+    
+    try {
+      const { data, error } = await supabase
+        .from('transactions')
+        .select('*')
+        .order('date', { ascending: false })
 
-    if (error) console.error(error)
-    else setTransactions(data || [])
+      if (error) {
+        console.error('Erro ao buscar transações:', error)
+      } else {
+        setTransactions(data || [])
+      }
+    } catch (error) {
+      console.error('Erro ao buscar transações:', error)
+    }
   }
 
   return (

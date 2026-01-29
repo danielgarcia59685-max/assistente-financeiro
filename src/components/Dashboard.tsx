@@ -107,6 +107,17 @@ export default function Dashboard() {
       return
     }
 
+    // Validação básica
+    if (!formData.amount || isNaN(parseFloat(formData.amount))) {
+      alert('Por favor, insira um valor válido.')
+      return
+    }
+
+    if (!formData.category.trim()) {
+      alert('Por favor, insira uma categoria.')
+      return
+    }
+
     try {
       const { error } = await supabase
         .from('transactions')
@@ -120,7 +131,7 @@ export default function Dashboard() {
 
       if (error) {
         console.error('Erro ao adicionar transação:', error)
-        alert('Erro ao adicionar transação')
+        alert(`Erro ao adicionar transação: ${error.message}`)
       } else {
         // Reset form
         setFormData({
@@ -138,7 +149,7 @@ export default function Dashboard() {
       }
     } catch (error) {
       console.error('Erro ao adicionar transação:', error)
-      alert('Erro ao adicionar transação')
+      alert('Erro ao adicionar transação. Tente novamente.')
     }
   }
 
