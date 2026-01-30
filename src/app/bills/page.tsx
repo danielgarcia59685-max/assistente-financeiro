@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/hooks/use-auth'
 import { Navigation } from '@/components/Navigation'
@@ -32,16 +32,39 @@ export default function BillsPage() {
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<'payable' | 'receivable'>('payable')
+  const [month, setMonth] = useState('')
+  const [startDate, setStartDate] = useState('')
+  const [endDate, setEndDate] = useState('')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'paid'>('all')
   const [formData, setFormData] = useState({
     amount: '',
     due_date: new Date().toISOString().split('T')[0],
     description: '',
+    party_name: '',
     is_recurring: false,
     recurrence_interval: 'monthly',
     recurrence_count: '',
     recurrence_end_date: '',
   })
   const [isSubmitting, setIsSubmitting] = useState(false)
+
+  const dateRange = useMemo(() => {
+    if (month) {
+      const [yearStr, monthStr] = month.split('-')
+      const year = Number(yearStr)
+      const monthNumber = Number(monthStr)
+      if (!year || !monthNumber) return { start: null, end: null }
+      const lastDay = new Date(year, monthNumber, 0).getDate()
+      const start = `${yearStr}-${monthStr}-01`
+      const end = `${yearStr}-${monthStr}-${String(lastDay).padStart(2, '0')}`
+      return { start, end }
+    }
+
+    return {
+      start: startDate || null,
+      end: endDate || null,
+    }
+  }, [month, startDate, endDate])
 
   useEffect(() => {
     if (!authLoading && !userId) {
@@ -51,17 +74,33 @@ export default function BillsPage() {
     if (userId) {
       fetchBills()
     }
-  }, [activeTab, userId, authLoading, router])
+  }, [activeTab, userId, authLoading, router, dateRange.start, dateRange.end, statusFilter])
 
   const fetchBills = async () => {
     if (!supabase) return
+    if (!userId) return
 
     try {
       const table = activeTab === 'payable' ? 'accounts_payable' : 'accounts_receivable'
-      const { data, error } = await supabase
+      let query = supabase
         .from(table)
         .select('*')
+        .eq('user_id', userId)
         .order('due_date', { ascending: true })
+
+      if (dateRange.start) {
+        query = query.gte('due_date', dateRange.start)
+      }
+
+      if (dateRange.end) {
+        query = query.lte('due_date', dateRange.end)
+      }
+
+      if (statusFilter !== 'all') {
+        query = query.eq('status', statusFilter)
+      }
+
+      const { data, error } = await query
 
       if (!error && data) {
         setBills(data)
@@ -74,10 +113,22 @@ export default function BillsPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!supabase) return
+    const { data: sessionData } = await supabase.auth.getSession()
+    if (!sessionData.session) {
+      toast({ title: 'Sessão expirada', description: 'Faça login novamente para salvar a conta', variant: 'destructive' })
+      return
+    }
+    const authUserId = sessionData.session.user.id
+    const authEmail = sessionData.session.user.email || ''
+    const fallbackName = authEmail ? authEmail.split('@')[0] : 'Usuário'
 
     // Validação
     if (!formData.amount || isNaN(Number(formData.amount)) || Number(formData.amount) <= 0) {
       toast({ title: 'Valor inválido', description: 'Informe um valor maior que 0', variant: 'destructive' })
+      return
+    }
+    if (!formData.party_name || formData.party_name.trim().length === 0) {
+      toast({ title: 'Nome inválido', description: 'Informe um nome para a conta', variant: 'destructive' })
       return
     }
     if (!formData.due_date) {
@@ -92,34 +143,55 @@ export default function BillsPage() {
     setIsSubmitting(true)
     try {
       const table = activeTab === 'payable' ? 'accounts_payable' : 'accounts_receivable'
-      const billData = {
+      const billData: Record<string, any> = {
+        user_id: authUserId,
         amount: parseFloat(formData.amount),
         due_date: formData.due_date,
         description: formData.description,
-        is_recurring: formData.is_recurring,
-        recurrence_interval: formData.is_recurring ? formData.recurrence_interval : null,
-        recurrence_count: formData.is_recurring ? parseInt(formData.recurrence_count) : null,
-        recurrence_end_date: formData.is_recurring ? formData.recurrence_end_date : null,
+      }
+
+      await supabase
+        .from('users')
+        .upsert([{ id: authUserId, email: authEmail || `${authUserId}@local`, name: fallbackName }])
+        .throwOnError()
+
+      if (activeTab === 'payable') {
+        billData.supplier_name = formData.party_name
+      } else {
+        billData.client_name = formData.party_name
       }
 
       if (editingId) {
-        await supabase.from(table).update(billData).eq('id', editingId)
+        await supabase
+          .from(table)
+          .update(billData)
+          .eq('id', editingId)
+          .select('id')
+          .single()
+          .throwOnError()
       } else {
-        await supabase.from(table).insert([{ ...billData, status: 'pending' }])
+        await supabase
+          .from(table)
+          .insert([{ ...billData, status: 'pending' }])
+          .select('id')
+          .single()
+          .throwOnError()
       }
 
       resetForm()
       fetchBills()
+      toast({ title: 'Sucesso', description: 'Conta salva com sucesso' })
     } catch (error) {
+      const message = (error as any)?.message || JSON.stringify(error)
       console.error('Erro ao salvar conta:', error)
-      toast({ title: 'Erro', description: 'Não foi possível salvar a conta', variant: 'destructive' })
+      toast({ title: 'Erro', description: message || 'Não foi possível salvar a conta', variant: 'destructive' })
     } finally {
       setIsSubmitting(false)
     }
   }
 
   const resetForm = () => {
-    setFormData({ amount: '', due_date: new Date().toISOString().split('T')[0], description: '', is_recurring: false, recurrence_interval: 'monthly', recurrence_count: '', recurrence_end_date: '' })
+    setFormData({ amount: '', due_date: new Date().toISOString().split('T')[0], description: '', party_name: '', is_recurring: false, recurrence_interval: 'monthly', recurrence_count: '', recurrence_end_date: '' })
     setEditingId(null)
     setShowForm(false)
   }
@@ -129,6 +201,7 @@ export default function BillsPage() {
       amount: bill.amount.toString(),
       due_date: bill.due_date.split('T')[0],
       description: bill.description,
+      party_name: activeTab === 'payable' ? (bill as Bill & { supplier_name?: string }).supplier_name || '' : (bill as Bill & { client_name?: string }).client_name || '',
       is_recurring: bill.is_recurring || false,
       recurrence_interval: bill.recurrence_interval || 'monthly',
       recurrence_count: bill.recurrence_count?.toString() || '',
@@ -200,6 +273,78 @@ export default function BillsPage() {
           ))}
         </div>
 
+        {/* Filters */}
+        <div className="bg-gray-900 rounded-2xl border border-gray-800 p-6 mb-8">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="space-y-2">
+              <Label className="text-gray-300">Mês</Label>
+              <Input
+                type="month"
+                value={month}
+                onChange={(e) => {
+                  setMonth(e.target.value)
+                  if (e.target.value) {
+                    setStartDate('')
+                    setEndDate('')
+                  }
+                }}
+                className="bg-gray-800 border-gray-700 text-white rounded-xl"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-gray-300">Data inicial</Label>
+              <Input
+                type="date"
+                value={startDate}
+                onChange={(e) => {
+                  setStartDate(e.target.value)
+                  if (e.target.value) setMonth('')
+                }}
+                className="bg-gray-800 border-gray-700 text-white rounded-xl"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-gray-300">Data final</Label>
+              <Input
+                type="date"
+                value={endDate}
+                onChange={(e) => {
+                  setEndDate(e.target.value)
+                  if (e.target.value) setMonth('')
+                }}
+                className="bg-gray-800 border-gray-700 text-white rounded-xl"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-gray-300">Status</Label>
+              <Select value={statusFilter} onValueChange={(value: 'all' | 'pending' | 'paid') => setStatusFilter(value)}>
+                <SelectTrigger className="bg-gray-800 border-gray-700 text-white rounded-xl">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="bg-gray-800 border-gray-700">
+                  <SelectItem value="all">Todos</SelectItem>
+                  <SelectItem value="pending">Pendente</SelectItem>
+                  <SelectItem value="paid">Pago</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="flex gap-3 mt-4">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setMonth('')
+                setStartDate('')
+                setEndDate('')
+                setStatusFilter('all')
+              }}
+            >
+              Limpar filtros
+            </Button>
+          </div>
+        </div>
+
         {/* Summary Cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
           <div className="bg-gray-900 rounded-2xl border border-gray-800 p-6">
@@ -221,6 +366,16 @@ export default function BillsPage() {
           <div className="bg-gray-900 rounded-2xl border border-gray-800 p-6 mb-8">
             <form onSubmit={handleSubmit} className="space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-2">
+                  <Label className="text-gray-300">{activeTab === 'payable' ? 'Fornecedor' : 'Cliente'}</Label>
+                  <Input
+                    placeholder={activeTab === 'payable' ? 'Ex: Conta de luz, Fornecedor X' : 'Ex: Cliente Y'}
+                    value={formData.party_name}
+                    onChange={(e) => setFormData({ ...formData, party_name: e.target.value })}
+                    required
+                    className="bg-gray-800 border-gray-700 text-white rounded-xl"
+                  />
+                </div>
                 <div className="space-y-2">
                   <Label className="text-gray-300">Valor</Label>
                   <Input type="number" placeholder="0.00" value={formData.amount} onChange={(e) => setFormData({ ...formData, amount: e.target.value })} required className="bg-gray-800 border-gray-700 text-white rounded-xl" />

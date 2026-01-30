@@ -1,10 +1,13 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 import { Navigation } from '@/components/Navigation'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { supabase } from '@/lib/supabase'
 import { BarChart3, TrendingUp, TrendingDown, DollarSign } from 'lucide-react'
+import { useAuth } from '@/hooks/use-auth'
 
 interface Transaction {
   id: string
@@ -16,33 +19,70 @@ interface Transaction {
 }
 
 export default function AnalyticsPage() {
+  const { userId, loading: authLoading } = useAuth()
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [totalIncome, setTotalIncome] = useState(0)
   const [totalExpense, setTotalExpense] = useState(0)
   const [categoryData, setCategoryData] = useState<Record<string, number>>({})
   const [dateFilter, setDateFilter] = useState('all')
+  const [month, setMonth] = useState('')
+  const [startDate, setStartDate] = useState('')
+  const [endDate, setEndDate] = useState('')
+  const [search, setSearch] = useState('')
+
+  const dateRange = useMemo(() => {
+    if (month) {
+      const [yearStr, monthStr] = month.split('-')
+      const year = Number(yearStr)
+      const monthNumber = Number(monthStr)
+      if (!year || !monthNumber) return { start: null, end: null }
+      const lastDay = new Date(year, monthNumber, 0).getDate()
+      const start = `${yearStr}-${monthStr}-01`
+      const end = `${yearStr}-${monthStr}-${String(lastDay).padStart(2, '0')}`
+      return { start, end }
+    }
+
+    return {
+      start: startDate || null,
+      end: endDate || null,
+    }
+  }, [month, startDate, endDate])
 
   useEffect(() => {
+    if (authLoading || !userId) return
     fetchData()
-  }, [dateFilter])
+  }, [dateFilter, dateRange.start, dateRange.end, search, authLoading, userId])
 
   const fetchData = async () => {
-    if (!supabase) return
+    if (!supabase || !userId) return
 
     try {
-      let query = supabase.from('transactions').select('*')
+      let query = supabase
+        .from('transactions')
+        .select('*')
+        .eq('user_id', userId)
       
-      // Apply date filter
-      const today = new Date()
-      if (dateFilter === 'month') {
-        const monthStart = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0]
-        query = query.gte('date', monthStart)
-      } else if (dateFilter === 'quarter') {
-        const quarterStart = new Date(today.getFullYear(), Math.floor(today.getMonth() / 3) * 3, 1).toISOString().split('T')[0]
-        query = query.gte('date', quarterStart)
-      } else if (dateFilter === 'year') {
-        const yearStart = new Date(today.getFullYear(), 0, 1).toISOString().split('T')[0]
-        query = query.gte('date', yearStart)
+      if (dateRange.start || dateRange.end) {
+        if (dateRange.start) query = query.gte('date', dateRange.start)
+        if (dateRange.end) query = query.lte('date', dateRange.end)
+      } else {
+        // Apply quick date filter
+        const today = new Date()
+        if (dateFilter === 'month') {
+          const monthStart = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0]
+          query = query.gte('date', monthStart)
+        } else if (dateFilter === 'quarter') {
+          const quarterStart = new Date(today.getFullYear(), Math.floor(today.getMonth() / 3) * 3, 1).toISOString().split('T')[0]
+          query = query.gte('date', quarterStart)
+        } else if (dateFilter === 'year') {
+          const yearStart = new Date(today.getFullYear(), 0, 1).toISOString().split('T')[0]
+          query = query.gte('date', yearStart)
+        }
+      }
+
+      if (search.trim()) {
+        const term = search.trim()
+        query = query.or(`category.ilike.%${term}%,description.ilike.%${term}%`)
       }
 
       const { data, error } = await query.order('date', { ascending: false })
@@ -104,7 +144,7 @@ export default function AnalyticsPage() {
         </div>
 
         {/* Filters */}
-        <div className="mb-8 flex gap-3 flex-wrap">
+        <div className="mb-6 flex gap-3 flex-wrap">
           {['all', 'month', 'quarter', 'year'].map(period => (
             <Button
               key={period}
@@ -118,6 +158,58 @@ export default function AnalyticsPage() {
               {period === 'all' ? 'Todos' : period === 'month' ? 'Mês' : period === 'quarter' ? 'Trimestre' : 'Ano'}
             </Button>
           ))}
+        </div>
+
+        <div className="mb-8 grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="space-y-2">
+            <Label className="text-gray-300">Mês</Label>
+            <Input
+              type="month"
+              value={month}
+              onChange={(e) => {
+                setMonth(e.target.value)
+                if (e.target.value) {
+                  setStartDate('')
+                  setEndDate('')
+                }
+              }}
+              className="bg-gray-800 border-gray-700 text-white rounded-xl"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label className="text-gray-300">Data inicial</Label>
+            <Input
+              type="date"
+              value={startDate}
+              onChange={(e) => {
+                setStartDate(e.target.value)
+                if (e.target.value) setMonth('')
+              }}
+              className="bg-gray-800 border-gray-700 text-white rounded-xl"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label className="text-gray-300">Data final</Label>
+            <Input
+              type="date"
+              value={endDate}
+              onChange={(e) => {
+                setEndDate(e.target.value)
+                if (e.target.value) setMonth('')
+              }}
+              className="bg-gray-800 border-gray-700 text-white rounded-xl"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label className="text-gray-300">Pesquisa</Label>
+            <Input
+              type="text"
+              placeholder="Categoria ou descrição"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="bg-gray-800 border-gray-700 text-white rounded-xl"
+            />
+          </div>
         </div>
 
         {/* Category Breakdown */}

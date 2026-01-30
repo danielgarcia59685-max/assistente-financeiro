@@ -24,6 +24,8 @@ export default function RegisterPage() {
     setLoading(true)
 
     try {
+      const normalizedEmail = email.trim().toLowerCase()
+
       if (password !== confirmPassword) {
         setError('As senhas não coincidem')
         setLoading(false)
@@ -38,12 +40,16 @@ export default function RegisterPage() {
 
       // Registrar via Supabase Auth
       const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-        email,
+        email: normalizedEmail,
         password,
       })
 
       if (signUpError) {
-        setError('Erro ao registrar: ' + signUpError.message)
+        if (signUpError.message.toLowerCase().includes('already registered')) {
+          setError('Este email já está cadastrado')
+        } else {
+          setError('Erro ao registrar: ' + signUpError.message)
+        }
         setLoading(false)
         return
       }
@@ -51,7 +57,8 @@ export default function RegisterPage() {
       // Se usuário criado, garantir perfil na tabela `users`
       const userId = signUpData?.user?.id
       if (userId) {
-        await supabase.from('users').upsert([{ id: userId, email }])
+        const fallbackName = normalizedEmail.split('@')[0] || 'Usuário'
+        await supabase.from('users').upsert([{ id: userId, email: normalizedEmail, name: fallbackName }])
       }
 
       setSuccess('Conta criada com sucesso! Verifique seu email se necessário. Redirecionando...')

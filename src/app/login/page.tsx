@@ -13,11 +13,15 @@ export default function LoginPage() {
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [info, setInfo] = useState('')
+  const [showResend, setShowResend] = useState(false)
   const router = useRouter()
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
+    setInfo('')
+    setShowResend(false)
     setLoading(true)
 
     try {
@@ -25,14 +29,22 @@ export default function LoginPage() {
         setError('Supabase não configurado')
         return
       }
+      const normalizedEmail = email.trim().toLowerCase()
+
       // Fazer login via Supabase Auth
       const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
-        email,
+        email: normalizedEmail,
         password,
       })
 
       if (signInError || !signInData?.user) {
-        setError('Email ou senha incorretos')
+        const message = signInError?.message?.toLowerCase() || ''
+        if (message.includes('confirm') || message.includes('not confirmed')) {
+          setError('Seu email ainda não foi confirmado. Verifique sua caixa de entrada ou reenvie a confirmação.')
+          setShowResend(true)
+        } else {
+          setError('Email ou senha incorretos')
+        }
         return
       }
 
@@ -47,11 +59,12 @@ export default function LoginPage() {
 
       if (!profile) {
         // Criar perfil mínimo
-        await supabase.from('users').insert([{ id: userId, email }])
+        const fallbackName = normalizedEmail.split('@')[0] || 'Usuário'
+        await supabase.from('users').insert([{ id: userId, email: normalizedEmail, name: fallbackName }])
       }
 
       localStorage.setItem('user_id', userId)
-      localStorage.setItem('user_email', email)
+      localStorage.setItem('user_email', normalizedEmail)
 
       router.push('/dashboard')
     } catch (err: any) {
@@ -59,6 +72,34 @@ export default function LoginPage() {
     } finally {
       setLoading(false)
     }
+  }
+
+  const handleResendConfirmation = async () => {
+    setError('')
+    setInfo('')
+
+    if (!supabase) {
+      setError('Supabase não configurado')
+      return
+    }
+
+    const normalizedEmail = email.trim().toLowerCase()
+    if (!normalizedEmail) {
+      setError('Informe o email para reenviar a confirmação')
+      return
+    }
+
+    const { error: resendError } = await supabase.auth.resend({
+      type: 'signup',
+      email: normalizedEmail,
+    })
+
+    if (resendError) {
+      setError('Erro ao reenviar confirmação: ' + resendError.message)
+      return
+    }
+
+    setInfo('Email de confirmação reenviado. Verifique sua caixa de entrada.')
   }
 
   return (
@@ -90,6 +131,14 @@ export default function LoginPage() {
               <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 flex items-start gap-3">
                 <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
                 <p className="text-red-400 text-sm">{error}</p>
+              </div>
+            )}
+
+            {/* Info Alert */}
+            {info && (
+              <div className="bg-green-500/10 border border-green-500/20 rounded-xl p-4 flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" />
+                <p className="text-green-400 text-sm">{info}</p>
               </div>
             )}
 
@@ -130,6 +179,17 @@ export default function LoginPage() {
               {loading ? 'Entrando...' : 'Entrar'}
               {!loading && <ArrowRight className="w-4 h-4" />}
             </Button>
+
+            {showResend && (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleResendConfirmation}
+                className="w-full border-amber-600 text-amber-400 hover:text-amber-300 hover:bg-amber-600/10"
+              >
+                Reenviar confirmação de email
+              </Button>
+            )}
 
             {/* Sign Up Link */}
             <div className="text-center pt-4 border-t border-gray-800">

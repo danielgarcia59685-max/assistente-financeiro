@@ -1,12 +1,13 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/hooks/use-auth'
 import { Navigation } from '@/components/Navigation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { supabase } from '@/lib/supabase'
 import { Bell, Plus, Trash2, CheckCircle2, Clock, AlertCircle, Edit } from 'lucide-react'
 import { toast } from '@/hooks/use-toast'
@@ -26,6 +27,10 @@ export default function RemindersPage() {
   const [reminders, setReminders] = useState<Reminder[]>([])
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
+  const [month, setMonth] = useState('')
+  const [startDate, setStartDate] = useState('')
+  const [endDate, setEndDate] = useState('')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'completed'>('all')
   const [formData, setFormData] = useState({
     title: '',
     description: '',
@@ -33,6 +38,24 @@ export default function RemindersPage() {
     reminder_type: 'task',
   })
   const [isSubmitting, setIsSubmitting] = useState(false)
+
+  const dateRange = useMemo(() => {
+    if (month) {
+      const [yearStr, monthStr] = month.split('-')
+      const year = Number(yearStr)
+      const monthNumber = Number(monthStr)
+      if (!year || !monthNumber) return { start: null, end: null }
+      const lastDay = new Date(year, monthNumber, 0).getDate()
+      const start = `${yearStr}-${monthStr}-01`
+      const end = `${yearStr}-${monthStr}-${String(lastDay).padStart(2, '0')}`
+      return { start, end }
+    }
+
+    return {
+      start: startDate || null,
+      end: endDate || null,
+    }
+  }, [month, startDate, endDate])
 
   useEffect(() => {
     if (!authLoading && !userId) {
@@ -42,16 +65,32 @@ export default function RemindersPage() {
     if (userId) {
       fetchReminders()
     }
-  }, [userId, authLoading, router])
+  }, [userId, authLoading, router, dateRange.start, dateRange.end, statusFilter])
 
   const fetchReminders = async () => {
     if (!supabase) return
+    if (!userId) return
 
     try {
-      const { data, error } = await supabase
+      let query = supabase
         .from('reminders')
         .select('*')
+        .eq('user_id', userId)
         .order('due_date', { ascending: true })
+
+      if (dateRange.start) {
+        query = query.gte('due_date', dateRange.start)
+      }
+
+      if (dateRange.end) {
+        query = query.lte('due_date', dateRange.end)
+      }
+
+      if (statusFilter !== 'all') {
+        query = query.eq('status', statusFilter)
+      }
+
+      const { data, error } = await query
 
       if (!error && data) {
         setReminders(data)
@@ -64,6 +103,14 @@ export default function RemindersPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!supabase) return
+    const { data: sessionData } = await supabase.auth.getSession()
+    if (!sessionData.session) {
+      toast({ title: 'Sessão expirada', description: 'Faça login novamente para salvar o compromisso', variant: 'destructive' })
+      return
+    }
+    const authUserId = sessionData.session.user.id
+    const authEmail = sessionData.session.user.email || ''
+    const fallbackName = authEmail ? authEmail.split('@')[0] : 'Usuário'
 
     // Validação
     if (!formData.title || formData.title.trim().length === 0) {
@@ -77,24 +124,55 @@ export default function RemindersPage() {
     try {
       if (editingId) {
         // Atualizar lembrete
-        await supabase.from('reminders').update({
+        const { error } = await supabase.from('reminders').update({
           title: formData.title,
           description: formData.description,
           due_date: formData.due_date,
           reminder_type: formData.reminder_type,
         }).eq('id', editingId)
+        if (error) {
+          console.error('Erro ao atualizar lembrete:', {
+            message: (error as any)?.message,
+            details: (error as any)?.details,
+            hint: (error as any)?.hint,
+            code: (error as any)?.code,
+            status: (error as any)?.status,
+            raw: error,
+          })
+          toast({ title: 'Erro', description: (error as any)?.message || 'Falha ao atualizar compromisso', variant: 'destructive' })
+          return
+        }
       } else {
         // Inserir novo lembrete
-        await supabase.from('reminders').insert([{
+        await supabase
+          .from('users')
+          .upsert([{ id: authUserId, email: authEmail || `${authUserId}@local`, name: fallbackName }])
+          .throwOnError()
+        const { error } = await supabase.from('reminders').insert([{
           ...formData,
+          user_id: authUserId,
           status: 'pending',
         }])
+        if (error) {
+          console.error('Erro ao criar lembrete:', {
+            message: (error as any)?.message,
+            details: (error as any)?.details,
+            hint: (error as any)?.hint,
+            code: (error as any)?.code,
+            status: (error as any)?.status,
+            raw: error,
+          })
+          toast({ title: 'Erro', description: (error as any)?.message || 'Falha ao criar compromisso', variant: 'destructive' })
+          return
+        }
       }
 
       resetForm()
       fetchReminders()
+      toast({ title: 'Sucesso', description: 'Compromisso salvo com sucesso' })
     } catch (error) {
       console.error('Erro ao salvar lembrete:', error)
+      toast({ title: 'Erro', description: 'Não foi possível salvar o compromisso', variant: 'destructive' })
     }
   }
 
@@ -173,6 +251,78 @@ export default function RemindersPage() {
           <div className="bg-gray-900 rounded-2xl border border-gray-800 p-6">
             <p className="text-gray-400 text-sm mb-2">Próximos</p>
             <p className="text-3xl font-bold text-blue-500">{pendingReminders.filter(r => new Date(r.due_date) > new Date()).length}</p>
+          </div>
+        </div>
+
+        {/* Filters */}
+        <div className="bg-gray-900 rounded-2xl border border-gray-800 p-6 mb-8">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="space-y-2">
+              <Label className="text-gray-300">Mês</Label>
+              <Input
+                type="month"
+                value={month}
+                onChange={(e) => {
+                  setMonth(e.target.value)
+                  if (e.target.value) {
+                    setStartDate('')
+                    setEndDate('')
+                  }
+                }}
+                className="bg-gray-800 border-gray-700 text-white rounded-xl"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-gray-300">Data inicial</Label>
+              <Input
+                type="date"
+                value={startDate}
+                onChange={(e) => {
+                  setStartDate(e.target.value)
+                  if (e.target.value) setMonth('')
+                }}
+                className="bg-gray-800 border-gray-700 text-white rounded-xl"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-gray-300">Data final</Label>
+              <Input
+                type="date"
+                value={endDate}
+                onChange={(e) => {
+                  setEndDate(e.target.value)
+                  if (e.target.value) setMonth('')
+                }}
+                className="bg-gray-800 border-gray-700 text-white rounded-xl"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-gray-300">Status</Label>
+              <Select value={statusFilter} onValueChange={(value: 'all' | 'pending' | 'completed') => setStatusFilter(value)}>
+                <SelectTrigger className="bg-gray-800 border-gray-700 text-white rounded-xl">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="bg-gray-800 border-gray-700">
+                  <SelectItem value="all">Todos</SelectItem>
+                  <SelectItem value="pending">Pendente</SelectItem>
+                  <SelectItem value="completed">Concluído</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="flex gap-3 mt-4">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setMonth('')
+                setStartDate('')
+                setEndDate('')
+                setStatusFilter('all')
+              }}
+            >
+              Limpar filtros
+            </Button>
           </div>
         </div>
 

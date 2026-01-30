@@ -1,17 +1,15 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
-import { useAuth } from '@/hooks/use-auth'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Edit, Trash2, Plus } from 'lucide-react'
-import { toast } from '@/hooks/use-toast'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Navigation } from '@/components/Navigation'
 import { supabase } from '@/lib/supabase'
+import { useAuth } from '@/hooks/use-auth'
 
 interface Transaction {
   id: string
@@ -24,11 +22,13 @@ interface Transaction {
 }
 
 export default function TransactionsPage() {
-  const router = useRouter()
   const { userId, loading: authLoading } = useAuth()
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
+  const [categoryFilter, setCategoryFilter] = useState('')
+  const [search, setSearch] = useState('')
+  const [typeFilter, setTypeFilter] = useState<'all' | 'income' | 'expense'>('all')
   const [formData, setFormData] = useState({
     amount: '',
     type: 'expense' as 'income' | 'expense',
@@ -37,29 +37,39 @@ export default function TransactionsPage() {
     date: new Date().toISOString().split('T')[0],
     payment_method: 'dinheiro',
   })
-  const [isSubmitting, setIsSubmitting] = useState(false)
 
   useEffect(() => {
-    if (!authLoading && !userId) {
-      router.push('/login')
-      return
-    }
-    if (userId) {
-      fetchTransactions()
-    }
-  }, [userId, authLoading, router])
+    if (authLoading || !userId) return
+    fetchTransactions()
+  }, [authLoading, userId, categoryFilter, search, typeFilter])
 
   const fetchTransactions = async () => {
-    if (!supabase) {
+    if (!supabase || !userId) {
       console.warn('Supabase não está configurado')
       return
     }
     
     try {
-      const { data, error } = await supabase
+      let query = supabase
         .from('transactions')
         .select('*')
+        .eq('user_id', userId)
         .order('date', { ascending: false })
+
+      if (typeFilter !== 'all') {
+        query = query.eq('type', typeFilter)
+      }
+
+      if (categoryFilter.trim()) {
+        query = query.ilike('category', `%${categoryFilter.trim()}%`)
+      }
+
+      if (search.trim()) {
+        const term = search.trim()
+        query = query.or(`description.ilike.%${term}%,category.ilike.%${term}%`)
+      }
+
+      const { data, error } = await query
 
       if (error) {
         console.error('Erro ao buscar transações:', error)
@@ -73,19 +83,7 @@ export default function TransactionsPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!supabase) return
-
-    // Validação básica
-    if (!formData.amount || isNaN(Number(formData.amount)) || Number(formData.amount) <= 0) {
-      toast({ title: 'Valor inválido', description: 'Informe um valor maior que 0', variant: 'destructive' })
-      return
-    }
-    if (!formData.category) {
-      toast({ title: 'Categoria vazia', description: 'Selecione ou informe uma categoria', variant: 'destructive' })
-      return
-    }
-
-    setIsSubmitting(true)
+    if (!supabase || !userId) return
 
     try {
       if (editingId) {
@@ -101,6 +99,7 @@ export default function TransactionsPage() {
       } else {
         // Inserir nova transação
         await supabase.from('transactions').insert([{
+          user_id: userId,
           amount: parseFloat(formData.amount),
           type: formData.type,
           category: formData.category,
@@ -114,10 +113,6 @@ export default function TransactionsPage() {
       fetchTransactions()
     } catch (error) {
       console.error('Erro ao salvar transação:', error)
-      toast({ title: 'Erro', description: 'Não foi possível salvar a transação', variant: 'destructive' })
-    }
-    finally {
-      setIsSubmitting(false)
     }
   }
 
@@ -175,6 +170,56 @@ export default function TransactionsPage() {
             <Plus className="w-5 h-5" />
             Nova Transação
           </Button>
+        </div>
+
+        {/* Filters */}
+        <div className="bg-gray-900 rounded-2xl border border-gray-800 p-6 mb-8">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="space-y-2">
+              <Label className="text-gray-300 font-semibold">Categoria</Label>
+              <Input
+                placeholder="Ex: Barbearia, Loja, Pessoal"
+                value={categoryFilter}
+                onChange={(e) => setCategoryFilter(e.target.value)}
+                className="bg-gray-800 border-gray-700 rounded-xl px-4 py-3 text-white placeholder:text-gray-500"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-gray-300 font-semibold">Pesquisar</Label>
+              <Input
+                placeholder="Descrição ou categoria"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="bg-gray-800 border-gray-700 rounded-xl px-4 py-3 text-white placeholder:text-gray-500"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-gray-300 font-semibold">Tipo</Label>
+              <Select value={typeFilter} onValueChange={(value: 'all' | 'income' | 'expense') => setTypeFilter(value)}>
+                <SelectTrigger className="bg-gray-800 border-gray-700 rounded-xl text-white">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="bg-gray-800 border-gray-700">
+                  <SelectItem value="all">Todos</SelectItem>
+                  <SelectItem value="income">Receita</SelectItem>
+                  <SelectItem value="expense">Despesa</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="flex gap-3 mt-4">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setCategoryFilter('')
+                setSearch('')
+                setTypeFilter('all')
+              }}
+            >
+              Limpar filtros
+            </Button>
+          </div>
         </div>
 
         {/* Form */}
@@ -253,8 +298,8 @@ export default function TransactionsPage() {
                 />
               </div>
               <div className="flex gap-3">
-                <Button type="submit" disabled={isSubmitting} className="bg-amber-600 hover:bg-amber-700 text-white font-semibold px-6 py-3 rounded-xl transition">
-                  {isSubmitting ? (editingId ? 'Atualizando...' : 'Adicionando...') : (editingId ? 'Atualizar' : 'Adicionar')}
+                <Button type="submit" className="bg-amber-600 hover:bg-amber-700 text-white font-semibold px-6 py-3 rounded-xl transition">
+                  {editingId ? 'Atualizar' : 'Adicionar'}
                 </Button>
                 <Button 
                   type="button" 
